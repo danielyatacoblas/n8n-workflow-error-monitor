@@ -3,6 +3,12 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y versionado [SemVer](https://semver.org/lang/es/).
 
+## [1.1.0]
+
+### Añadido
+- Imagen de arquitectura en el README: problema, entradas, pasos dentro de n8n y salidas.
+- Imagen de pruebas en el README: tests por archivo y verificaciones hechas en n8n real.
+
 ## [1.0.0]
 
 ### Añadido
