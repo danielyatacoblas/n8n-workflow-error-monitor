@@ -1,0 +1,266 @@
+{
+  "id": "monitordemo",
+  "name": "Monitor de errores · DEMO sin credenciales",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "err-1",
+      "name": "Error en otro workflow",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "notes": "Se dispara cuando falla cualquier workflow que tenga a este como Error Workflow (Settings → Error Workflow)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nodos Code de n8n del monitor de errores.\n// Espejo en JavaScript de src/monitor.py (misma lógica, misma salida).\n// La paridad entre ambos la verifica tests/test_paridad_js.py.\n//\n// scripts/build_workflow.py fija el marcador MODO:\n//   'error'    clasifica un aviso del Error Trigger (o uno simulado por webhook)\n//   'resumen'  arma el resumen del día desde el registro\n//   'panel'    arma el panel HTML de la demo\n\nconst MODO = 'error';\n\nconst PAUSA_CIERRE = 30 * 60;\nconst UMBRAL_ESCALAR = 5;\nconst RECORDATORIO = 4 * 60 * 60;\nconst MAX_REINTENTOS = 2;\nconst NIVELES = ['baja', 'media', 'alta', 'critica'];\nconst CRITICOS = ['Cobros · sincronizar pagos', 'Tienda · sincronizar stock'];\nconst SIN_REINTENTO = ['Newsletter · envío masivo'];\nconst MAX_EVENTOS = 300;       // eventos que guarda la demo para el panel\n\nconst CATEGORIAS = [\n  ['transitorio', ['timeout', 'timed out', 'econnreset', 'econnaborted', 'econnrefused',\n    'etimedout', 'socket hang up', 'too many requests', 'rate limit',\n    'bad gateway', 'service unavailable', 'gateway timeout',\n    'server is offline', 'temporarily', '#429', '#502', '#503', '#504']],\n  ['credenciales', ['unauthorized', 'forbidden', 'invalid credentials', 'authentication',\n    'token expired', 'token has expired', 'invalid_grant', 'api key',\n    'permission', '#401', '#403']],\n  ['datos', ['cannot read properties', 'is not a function', 'is not defined',\n    'unexpected token', 'invalid json', 'invalid input', 'validation',\n    'required field', 'typeerror']],\n  ['configuracion', ['not found', 'does not exist', 'no node', 'missing', 'parameter',\n    'could not find', '#404']],\n];\n\nconst SEVERIDAD_BASE = { transitorio: 'baja', credenciales: 'alta', datos: 'media',\n                         configuracion: 'alta', desconocido: 'media' };\n\nconst SUGERENCIA = {\n  transitorio: 'El servicio externo no respondió a tiempo. Si sigue fallando, revisar ' +\n    'si está caído o si se superó su límite de peticiones.',\n  credenciales: 'Una credencial venció o no tiene permisos. Renovarla en n8n → ' +\n    'Credentials; hasta entonces este workflow fallará en cada ejecución.',\n  datos: 'Llegó un dato con un formato inesperado. Abrir la ejecución para ver qué ' +\n    'entrada lo causó.',\n  configuracion: 'Falta algo en la configuración del workflow: un nodo, un recurso o ' +\n    'un parámetro.',\n  desconocido: 'Abrir la ejecución para revisar el detalle.',\n};\n\nconst SECRETOS = [\n  /(bearer[ \\t]+)[A-Za-z0-9._~+/=-]+/gi,\n  /((?:api[_-]?key|token|secret|password|clave|access_token)[\"']?[ \\t]*[:=][ \\t]*[\"']?)[^ \\t\\r\\n\"'&,}]+/gi,\n  /(https?:\\/\\/[^ \\t\\r\\n:/@]+:)[^ \\t\\r\\n@/]+(?=@)/gi,\n];\n\n// Cortar por caracteres y no por unidades UTF-16, como hace Python con [:n]\nconst cortar = (s, n) => Array.from(s).slice(0, n).join('');\n\n// ── lectura y limpieza ──\n\nfunction limpiar(texto) {\n  let t = String(texto === null || texto === undefined ? '' : texto);\n  for (const patron of SECRETOS) t = t.replace(patron, '$1***');\n  return t;\n}\n\nfunction leerEvento(aviso) {\n  if (aviso.body && typeof aviso.body === 'object' && 'workflow' in aviso.body) aviso = aviso.body;\n  const ejecucion = aviso.execution || {};\n  const disparador = aviso.trigger || {};\n  const error = ejecucion.error || disparador.error || {};\n  const nodo = (error.node && typeof error.node === 'object' && !Array.isArray(error.node)) ? error.node : {};\n  const mensajes = Array.isArray(error.messages) ? error.messages : [];\n  const workflow = aviso.workflow || {};\n  const tieneDisparador = Object.keys(disparador).length > 0;\n  return {\n    workflow_id: String(workflow.id || ''),\n    workflow: String(workflow.name || '(sin nombre)'),\n    ejecucion_id: String(ejecucion.id || ''),\n    url: String(ejecucion.url || ''),\n    nodo: String(nodo.name || ejecucion.lastNodeExecuted || (tieneDisparador ? '(disparador)' : '')),\n    tipo_error: String(error.name || ''),\n    mensaje: cortar(limpiar(error.message || '(sin mensaje)'), 300),\n    detalle: cortar(limpiar(error.description || (mensajes.length ? mensajes[0] : '')), 300),\n    codigo: String(error.httpCode || ''),\n    reintento_de: String(ejecucion.retryOf || ''),\n    modo: String(ejecucion.mode || disparador.mode || ''),\n  };\n}\n\n// ── clasificación ──\n\nfunction clasificar(e) {\n  const texto = [e.mensaje, e.detalle, e.codigo, e.tipo_error].join(' ').toLowerCase();\n  const codigos = new Set([...texto.matchAll(/(?<![0-9])([0-9]{3})(?![0-9])/g)].map((m) => '#' + m[1]));\n  for (const [categoria, patrones] of CATEGORIAS) {\n    for (const p of patrones) {\n      if (p.startsWith('#') ? codigos.has(p) : texto.includes(p)) return categoria;\n    }\n  }\n  return 'desconocido';\n}\n\nfunction severidad(categoria, workflow, subir = 0) {\n  let nivel = NIVELES.indexOf(SEVERIDAD_BASE[categoria]) + subir;\n  if (CRITICOS.includes(workflow)) nivel += 1;\n  return NIVELES[Math.min(nivel, NIVELES.length - 1)];\n}\n\nfunction huella(e) {\n  let m = e.mensaje.toLowerCase();\n  m = m.replace(/https?:\\/\\/[^ \\t\\r\\n]+/g, '<url>');\n  m = m.replace(/[a-z0-9_.+-]+@[a-z0-9_-]+\\.[a-z0-9_.]+/g, '<email>');\n  m = m.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<id>');\n  m = m.replace(/'[^']*'|\"[^\"]*\"/g, '<txt>');\n  m = m.replace(/[0-9]+/g, '<n>');\n  m = cortar(m.replace(/[ \\t\\r\\n]+/g, ' ').replace(/^ +| +$/g, ''), 160);\n  return `${e.workflow_id}|${e.nodo}|${m}`;\n}\n\n// ── decisión ──\n\nfunction decidir(e, estado, ahora) {\n  estado.grupos = estado.grupos || {};\n  estado.cadenas = estado.cadenas || {};\n  const { grupos, cadenas } = estado;\n  const categoria = clasificar(e);\n  const h = huella(e);\n\n  // Un reintento cuyo origen no está en la memoria se da por agotado: sin\n  // esta regla, un error que nunca se resuelve se reintentaría para siempre.\n  const conocido = !e.reintento_de || Object.prototype.hasOwnProperty.call(cadenas, e.reintento_de);\n  const n = !e.reintento_de ? 0 : conocido ? cadenas[e.reintento_de] + 1 : MAX_REINTENTOS;\n  if (e.ejecucion_id) cadenas[e.ejecucion_id] = n;\n\n  // Un incidente sigue abierto mientras el error se repita sin pausas largas\n  let g = grupos[h];\n  let anterior = 0;\n  if (!g || ahora - g.ultima >= PAUSA_CIERRE) {\n    if (g) anterior = g.conteo;\n    g = { inicio: ahora, ultima: ahora, conteo: 0, total: g ? g.total : 0,\n          ultimo_aviso: 0, alertado: false, escalado: false,\n          workflow: e.workflow, nodo: e.nodo, categoria, mensaje: e.mensaje };\n    grupos[h] = g;\n  }\n  g.conteo += 1;\n  g.total += 1;\n  g.ultima = ahora;\n\n  const reintentar = categoria === 'transitorio' && n < MAX_REINTENTOS &&\n    Boolean(e.ejecucion_id) && e.modo !== 'manual' && !SIN_REINTENTO.includes(e.workflow);\n  let aviso = '';\n  if (g.conteo >= UMBRAL_ESCALAR && !g.escalado) aviso = 'escalado';\n  else if (!reintentar && !g.alertado) aviso = 'alerta';\n  else if (g.alertado && ahora - g.ultimo_aviso >= RECORDATORIO) aviso = 'recordatorio';\n  if (aviso) {\n    g.alertado = true;\n    g.escalado = g.escalado || aviso === 'escalado';\n    g.ultimo_aviso = ahora;\n  }\n\n  const accion = aviso\n    ? { alerta: 'alertar', escalado: 'escalar', recordatorio: 'recordar' }[aviso]\n    : reintentar ? 'reintentar' : 'silenciar';\n  const sev = severidad(categoria, e.workflow, aviso === 'escalado' ? 1 : 0);\n  const r = { accion, reintentar, aviso, categoria, severidad: sev, huella: h,\n              conteo: g.conteo, reintento: n, evento: e, mensaje: '' };\n  if (aviso) {\n    r.mensaje = mensajeAlerta(e, categoria, sev, g, conocido ? n : -1, anterior, aviso, reintentar);\n  }\n  return r;\n}\n\nfunction duracion(segundos) {\n  const minutos = Math.max(1, Math.floor((segundos + 59) / 60));\n  if (minutos < 60) return `${minutos} min`;\n  return `${Math.floor(minutos / 60)} h ${String(minutos % 60).padStart(2, '0')} min`;\n}\n\nfunction mensajeAlerta(e, categoria, sev, g, n, anterior, aviso, reintentar) {\n  const titulo = { alerta: '', escalado: 'Se repite: ', recordatorio: 'Sigue fallando: ' }[aviso];\n  const lineas = [`[${sev.toUpperCase()}] ${titulo}${e.workflow}`];\n  if (aviso !== 'alerta') {\n    lineas.push(`${g.conteo} veces en ${duracion(g.ultima - g.inicio)}` +\n      (reintentar ? ' · cada ejecución se sigue reintentando sola.' : '.'));\n  }\n  lineas.push(`Nodo: ${e.nodo || '(desconocido)'}`);\n  lineas.push(`Error: ${e.mensaje}${e.codigo ? ` (${e.codigo})` : ''}`);\n  let tipo = `Tipo: ${categoria}`;\n  if (n > 0) {\n    const s = n > 1 ? 's' : '';\n    tipo += ` · falló también tras ${n} reintento${s} automático${s}`;\n  } else if (n < 0) {\n    tipo += ' · es un reintento y volvió a fallar';\n  }\n  lineas.push(tipo);\n  if (anterior > 1) lineas.push(`Ya había pasado antes: el incidente anterior sumó ${anterior} veces.`);\n  lineas.push(`Qué hacer: ${SUGERENCIA[categoria]}`);\n  if (e.url) lineas.push(`Ejecución: ${e.url}`);\n  return lineas.join('\\n');\n}\n\nfunction filaRegistro(r, fecha) {\n  const e = r.evento;\n  return { fecha, workflow: e.workflow, nodo: e.nodo, categoria: r.categoria,\n           severidad: r.severidad, accion: r.accion, mensaje: e.mensaje, codigo: e.codigo,\n           ejecucion: e.ejecucion_id, reintento: r.reintento,\n           reintentado: r.reintentar ? 'si' : 'no', huella: r.huella };\n}\n\n// ── resumen del día ──\n\nfunction resumenDia(filas, dia) {\n  const hoy = filas.filter((f) => String(f.fecha || '').slice(0, 10) === dia);\n  if (!hoy.length) return `Errores del ${dia}: ninguno. Todos los workflows funcionaron.`;\n  const porWorkflow = {};\n  for (const f of hoy) {\n    const k = String(f.workflow || '?');\n    porWorkflow[k] = porWorkflow[k] || { total: 0, reintentados: 0 };\n    porWorkflow[k].total += 1;\n    if (f.reintentado === 'si') porWorkflow[k].reintentados += 1;\n  }\n  const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);\n  const nombres = Object.keys(porWorkflow);\n  const lineas = [`Errores del ${dia}: ${hoy.length} en ${nombres.length} workflow` +\n    `${nombres.length > 1 ? 's' : ''}.`];\n  for (const [nombre, w] of Object.entries(porWorkflow)\n    .sort((a, b) => (b[1].total - a[1].total) || cmp(a[0], b[0]))) {\n    lineas.push(`- ${nombre}: ${w.total}${w.reintentados ? ` (${w.reintentados} reintentados)` : ''}`);\n  }\n  const categorias = {};\n  for (const f of hoy) {\n    const c = String(f.categoria || '?');\n    categorias[c] = (categorias[c] || 0) + 1;\n  }\n  lineas.push('Por tipo: ' + Object.entries(categorias)\n    .sort((a, b) => (b[1] - a[1]) || cmp(a[0], b[0]))\n    .map(([c, n]) => `${c} ${n}`).join(', '));\n  return lineas.join('\\n');\n}\n\n// ── panel HTML (solo demo) ──\n\nconst esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n\nfunction armarPanel(estado, dia) {\n  const eventos = estado.eventos || [];\n  const grupos = Object.values(estado.grupos || {}).sort((a, b) => b.ultima - a.ultima);\n  const colores = { baja: '#6b7480', media: '#b4561b', alta: '#b3261e', critica: '#7a0f0a' };\n  const acciones = { reintentar: 'reintentado', alertar: 'alerta enviada', escalar: 'escalado',\n                     recordar: 'recordatorio', silenciar: 'contado sin avisar' };\n  const conteo = (a) => eventos.filter((e) => e.accion === a).length;\n  const filas = grupos.map((g) => `<tr>\n      <td>${esc(g.workflow)}<div class=\"sub\">${esc(g.nodo)}</div></td>\n      <td><span class=\"cat\">${esc(g.categoria)}</span></td>\n      <td class=\"msg\">${esc(g.mensaje)}</td>\n      <td class=\"num\">${g.total}</td></tr>`).join('');\n  const ultimos = eventos.slice(-12).reverse().map((e) => `<li>\n      <b style=\"color:${colores[e.severidad]}\">${esc(e.severidad)}</b>\n      ${esc(e.workflow)} · ${esc(e.nodo)} — <i>${esc(acciones[e.accion] || e.accion)}</i></li>`).join('');\n  const tarjeta = (t, v) => `<div class=\"kpi\"><div class=\"sub\">${esc(t)}</div><b>${v}</b></div>`;\n  return `<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Monitor de errores</title>\n<style>\n:root{--bg:#f2f3f5;--panel:#fff;--t:#1c2530;--s:#66727f;--b:#dde1e6}\n@media (prefers-color-scheme:dark){:root{--bg:#11161c;--panel:#1a2129;--t:#e6ebf0;--s:#9aa6b2;--b:#2b3540}}\nbody{margin:0;background:var(--bg);color:var(--t);font:14px/1.45 system-ui,-apple-system,\"Segoe UI\",sans-serif}\nmain{max-width:1000px;margin:0 auto;padding:22px 16px;display:grid;gap:16px}\nsection{background:var(--panel);border:1px solid var(--b);border-radius:12px;padding:16px;overflow-x:auto}\nh1{font-size:20px;margin:0}h2{font-size:12px;color:var(--s);text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px}\n.sub{color:var(--s);font-size:12px}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}\n.kpi{border:1px solid var(--b);border-radius:10px;padding:10px}.kpi b{font-size:24px}\ntable{width:100%;border-collapse:collapse}td{padding:8px 6px;border-top:1px solid var(--b);vertical-align:top}\n.msg{font-family:ui-monospace,Consolas,monospace;font-size:12px}.num{text-align:right;font-weight:700}\n.cat{font-size:12px;border:1px solid var(--b);border-radius:99px;padding:2px 8px}\nul{margin:0;padding-left:18px;display:grid;gap:4px}pre{white-space:pre-wrap;margin:0;font-size:13px}\n</style></head><body><main>\n<section><h1>Monitor de errores de n8n</h1><div class=\"sub\">Actualizado ${esc(dia)} · un incidente sigue abierto mientras el mismo error se repita con menos de 30 minutos de pausa</div></section>\n<section class=\"kpis\">\n${tarjeta('Errores recibidos', eventos.length)}${tarjeta('Mensajes al equipo', conteo('alertar') + conteo('escalar') + conteo('recordar'))}\n${tarjeta('Reintentados solos', eventos.filter((e) => e.reintentado === 'si').length)}${tarjeta('Contados sin avisar', conteo('silenciar'))}\n</section>\n<section><h2>Errores agrupados</h2><table>${filas || '<tr><td>Sin errores todavía.</td></tr>'}</table></section>\n<section><h2>Últimos eventos</h2><ul>${ultimos || '<li>Sin eventos.</li>'}</ul></section>\n<section><h2>Resumen del día (lo que se enviaría a las 18:00)</h2><pre>${esc(resumenDia(eventos, dia))}</pre></section>\n</main></body></html>`;\n}\n\n// ── Ejecución en n8n ──\n\nconst memoria = $getWorkflowStaticData('global');\nconst ahora = Math.floor(Date.now() / 1000);\nconst hoy = $now.toISODate();\n\nif (MODO === 'panel') {\n  return [{ json: { html: armarPanel(memoria, hoy) } }];\n}\n\nif (MODO === 'resumen') {\n  // En producción el registro está en la hoja; en la demo, en la memoria\n  let filas;\n  try { filas = $('Sheets · Leer registro').all().map((i) => i.json); }\n  catch (e) { filas = memoria.eventos || []; }\n  return [{ json: { texto: resumenDia(filas, hoy) } }];\n}\n\nreturn $input.all().map((item) => {\n  const r = decidir(leerEvento(item.json), memoria, ahora);\n  const fila = filaRegistro(r, $now.toISO());\n  memoria.eventos = (memoria.eventos || []).concat([fila]).slice(-MAX_EVENTOS);\n  // Las cadenas de reintentos viejas no sirven: se guardan solo las últimas 500\n  const ids = Object.keys(memoria.cadenas);\n  if (ids.length > 500) for (const id of ids.slice(0, ids.length - 500)) delete memoria.cadenas[id];\n  return { json: Object.assign(r, { fila }) };\n});\n"
+      },
+      "id": "code-1",
+      "name": "Clasificar error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "monitor-demo/error",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "wh-1",
+      "name": "Webhook · Simular error",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "monitor-demo-error"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nodos Code de n8n del monitor de errores.\n// Espejo en JavaScript de src/monitor.py (misma lógica, misma salida).\n// La paridad entre ambos la verifica tests/test_paridad_js.py.\n//\n// scripts/build_workflow.py fija el marcador MODO:\n//   'error'    clasifica un aviso del Error Trigger (o uno simulado por webhook)\n//   'resumen'  arma el resumen del día desde el registro\n//   'panel'    arma el panel HTML de la demo\n\nconst MODO = 'error';\n\nconst PAUSA_CIERRE = 30 * 60;\nconst UMBRAL_ESCALAR = 5;\nconst RECORDATORIO = 4 * 60 * 60;\nconst MAX_REINTENTOS = 2;\nconst NIVELES = ['baja', 'media', 'alta', 'critica'];\nconst CRITICOS = ['Cobros · sincronizar pagos', 'Tienda · sincronizar stock'];\nconst SIN_REINTENTO = ['Newsletter · envío masivo'];\nconst MAX_EVENTOS = 300;       // eventos que guarda la demo para el panel\n\nconst CATEGORIAS = [\n  ['transitorio', ['timeout', 'timed out', 'econnreset', 'econnaborted', 'econnrefused',\n    'etimedout', 'socket hang up', 'too many requests', 'rate limit',\n    'bad gateway', 'service unavailable', 'gateway timeout',\n    'server is offline', 'temporarily', '#429', '#502', '#503', '#504']],\n  ['credenciales', ['unauthorized', 'forbidden', 'invalid credentials', 'authentication',\n    'token expired', 'token has expired', 'invalid_grant', 'api key',\n    'permission', '#401', '#403']],\n  ['datos', ['cannot read properties', 'is not a function', 'is not defined',\n    'unexpected token', 'invalid json', 'invalid input', 'validation',\n    'required field', 'typeerror']],\n  ['configuracion', ['not found', 'does not exist', 'no node', 'missing', 'parameter',\n    'could not find', '#404']],\n];\n\nconst SEVERIDAD_BASE = { transitorio: 'baja', credenciales: 'alta', datos: 'media',\n                         configuracion: 'alta', desconocido: 'media' };\n\nconst SUGERENCIA = {\n  transitorio: 'El servicio externo no respondió a tiempo. Si sigue fallando, revisar ' +\n    'si está caído o si se superó su límite de peticiones.',\n  credenciales: 'Una credencial venció o no tiene permisos. Renovarla en n8n → ' +\n    'Credentials; hasta entonces este workflow fallará en cada ejecución.',\n  datos: 'Llegó un dato con un formato inesperado. Abrir la ejecución para ver qué ' +\n    'entrada lo causó.',\n  configuracion: 'Falta algo en la configuración del workflow: un nodo, un recurso o ' +\n    'un parámetro.',\n  desconocido: 'Abrir la ejecución para revisar el detalle.',\n};\n\nconst SECRETOS = [\n  /(bearer[ \\t]+)[A-Za-z0-9._~+/=-]+/gi,\n  /((?:api[_-]?key|token|secret|password|clave|access_token)[\"']?[ \\t]*[:=][ \\t]*[\"']?)[^ \\t\\r\\n\"'&,}]+/gi,\n  /(https?:\\/\\/[^ \\t\\r\\n:/@]+:)[^ \\t\\r\\n@/]+(?=@)/gi,\n];\n\n// Cortar por caracteres y no por unidades UTF-16, como hace Python con [:n]\nconst cortar = (s, n) => Array.from(s).slice(0, n).join('');\n\n// ── lectura y limpieza ──\n\nfunction limpiar(texto) {\n  let t = String(texto === null || texto === undefined ? '' : texto);\n  for (const patron of SECRETOS) t = t.replace(patron, '$1***');\n  return t;\n}\n\nfunction leerEvento(aviso) {\n  if (aviso.body && typeof aviso.body === 'object' && 'workflow' in aviso.body) aviso = aviso.body;\n  const ejecucion = aviso.execution || {};\n  const disparador = aviso.trigger || {};\n  const error = ejecucion.error || disparador.error || {};\n  const nodo = (error.node && typeof error.node === 'object' && !Array.isArray(error.node)) ? error.node : {};\n  const mensajes = Array.isArray(error.messages) ? error.messages : [];\n  const workflow = aviso.workflow || {};\n  const tieneDisparador = Object.keys(disparador).length > 0;\n  return {\n    workflow_id: String(workflow.id || ''),\n    workflow: String(workflow.name || '(sin nombre)'),\n    ejecucion_id: String(ejecucion.id || ''),\n    url: String(ejecucion.url || ''),\n    nodo: String(nodo.name || ejecucion.lastNodeExecuted || (tieneDisparador ? '(disparador)' : '')),\n    tipo_error: String(error.name || ''),\n    mensaje: cortar(limpiar(error.message || '(sin mensaje)'), 300),\n    detalle: cortar(limpiar(error.description || (mensajes.length ? mensajes[0] : '')), 300),\n    codigo: String(error.httpCode || ''),\n    reintento_de: String(ejecucion.retryOf || ''),\n    modo: String(ejecucion.mode || disparador.mode || ''),\n  };\n}\n\n// ── clasificación ──\n\nfunction clasificar(e) {\n  const texto = [e.mensaje, e.detalle, e.codigo, e.tipo_error].join(' ').toLowerCase();\n  const codigos = new Set([...texto.matchAll(/(?<![0-9])([0-9]{3})(?![0-9])/g)].map((m) => '#' + m[1]));\n  for (const [categoria, patrones] of CATEGORIAS) {\n    for (const p of patrones) {\n      if (p.startsWith('#') ? codigos.has(p) : texto.includes(p)) return categoria;\n    }\n  }\n  return 'desconocido';\n}\n\nfunction severidad(categoria, workflow, subir = 0) {\n  let nivel = NIVELES.indexOf(SEVERIDAD_BASE[categoria]) + subir;\n  if (CRITICOS.includes(workflow)) nivel += 1;\n  return NIVELES[Math.min(nivel, NIVELES.length - 1)];\n}\n\nfunction huella(e) {\n  let m = e.mensaje.toLowerCase();\n  m = m.replace(/https?:\\/\\/[^ \\t\\r\\n]+/g, '<url>');\n  m = m.replace(/[a-z0-9_.+-]+@[a-z0-9_-]+\\.[a-z0-9_.]+/g, '<email>');\n  m = m.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<id>');\n  m = m.replace(/'[^']*'|\"[^\"]*\"/g, '<txt>');\n  m = m.replace(/[0-9]+/g, '<n>');\n  m = cortar(m.replace(/[ \\t\\r\\n]+/g, ' ').replace(/^ +| +$/g, ''), 160);\n  return `${e.workflow_id}|${e.nodo}|${m}`;\n}\n\n// ── decisión ──\n\nfunction decidir(e, estado, ahora) {\n  estado.grupos = estado.grupos || {};\n  estado.cadenas = estado.cadenas || {};\n  const { grupos, cadenas } = estado;\n  const categoria = clasificar(e);\n  const h = huella(e);\n\n  // Un reintento cuyo origen no está en la memoria se da por agotado: sin\n  // esta regla, un error que nunca se resuelve se reintentaría para siempre.\n  const conocido = !e.reintento_de || Object.prototype.hasOwnProperty.call(cadenas, e.reintento_de);\n  const n = !e.reintento_de ? 0 : conocido ? cadenas[e.reintento_de] + 1 : MAX_REINTENTOS;\n  if (e.ejecucion_id) cadenas[e.ejecucion_id] = n;\n\n  // Un incidente sigue abierto mientras el error se repita sin pausas largas\n  let g = grupos[h];\n  let anterior = 0;\n  if (!g || ahora - g.ultima >= PAUSA_CIERRE) {\n    if (g) anterior = g.conteo;\n    g = { inicio: ahora, ultima: ahora, conteo: 0, total: g ? g.total : 0,\n          ultimo_aviso: 0, alertado: false, escalado: false,\n          workflow: e.workflow, nodo: e.nodo, categoria, mensaje: e.mensaje };\n    grupos[h] = g;\n  }\n  g.conteo += 1;\n  g.total += 1;\n  g.ultima = ahora;\n\n  const reintentar = categoria === 'transitorio' && n < MAX_REINTENTOS &&\n    Boolean(e.ejecucion_id) && e.modo !== 'manual' && !SIN_REINTENTO.includes(e.workflow);\n  let aviso = '';\n  if (g.conteo >= UMBRAL_ESCALAR && !g.escalado) aviso = 'escalado';\n  else if (!reintentar && !g.alertado) aviso = 'alerta';\n  else if (g.alertado && ahora - g.ultimo_aviso >= RECORDATORIO) aviso = 'recordatorio';\n  if (aviso) {\n    g.alertado = true;\n    g.escalado = g.escalado || aviso === 'escalado';\n    g.ultimo_aviso = ahora;\n  }\n\n  const accion = aviso\n    ? { alerta: 'alertar', escalado: 'escalar', recordatorio: 'recordar' }[aviso]\n    : reintentar ? 'reintentar' : 'silenciar';\n  const sev = severidad(categoria, e.workflow, aviso === 'escalado' ? 1 : 0);\n  const r = { accion, reintentar, aviso, categoria, severidad: sev, huella: h,\n              conteo: g.conteo, reintento: n, evento: e, mensaje: '' };\n  if (aviso) {\n    r.mensaje = mensajeAlerta(e, categoria, sev, g, conocido ? n : -1, anterior, aviso, reintentar);\n  }\n  return r;\n}\n\nfunction duracion(segundos) {\n  const minutos = Math.max(1, Math.floor((segundos + 59) / 60));\n  if (minutos < 60) return `${minutos} min`;\n  return `${Math.floor(minutos / 60)} h ${String(minutos % 60).padStart(2, '0')} min`;\n}\n\nfunction mensajeAlerta(e, categoria, sev, g, n, anterior, aviso, reintentar) {\n  const titulo = { alerta: '', escalado: 'Se repite: ', recordatorio: 'Sigue fallando: ' }[aviso];\n  const lineas = [`[${sev.toUpperCase()}] ${titulo}${e.workflow}`];\n  if (aviso !== 'alerta') {\n    lineas.push(`${g.conteo} veces en ${duracion(g.ultima - g.inicio)}` +\n      (reintentar ? ' · cada ejecución se sigue reintentando sola.' : '.'));\n  }\n  lineas.push(`Nodo: ${e.nodo || '(desconocido)'}`);\n  lineas.push(`Error: ${e.mensaje}${e.codigo ? ` (${e.codigo})` : ''}`);\n  let tipo = `Tipo: ${categoria}`;\n  if (n > 0) {\n    const s = n > 1 ? 's' : '';\n    tipo += ` · falló también tras ${n} reintento${s} automático${s}`;\n  } else if (n < 0) {\n    tipo += ' · es un reintento y volvió a fallar';\n  }\n  lineas.push(tipo);\n  if (anterior > 1) lineas.push(`Ya había pasado antes: el incidente anterior sumó ${anterior} veces.`);\n  lineas.push(`Qué hacer: ${SUGERENCIA[categoria]}`);\n  if (e.url) lineas.push(`Ejecución: ${e.url}`);\n  return lineas.join('\\n');\n}\n\nfunction filaRegistro(r, fecha) {\n  const e = r.evento;\n  return { fecha, workflow: e.workflow, nodo: e.nodo, categoria: r.categoria,\n           severidad: r.severidad, accion: r.accion, mensaje: e.mensaje, codigo: e.codigo,\n           ejecucion: e.ejecucion_id, reintento: r.reintento,\n           reintentado: r.reintentar ? 'si' : 'no', huella: r.huella };\n}\n\n// ── resumen del día ──\n\nfunction resumenDia(filas, dia) {\n  const hoy = filas.filter((f) => String(f.fecha || '').slice(0, 10) === dia);\n  if (!hoy.length) return `Errores del ${dia}: ninguno. Todos los workflows funcionaron.`;\n  const porWorkflow = {};\n  for (const f of hoy) {\n    const k = String(f.workflow || '?');\n    porWorkflow[k] = porWorkflow[k] || { total: 0, reintentados: 0 };\n    porWorkflow[k].total += 1;\n    if (f.reintentado === 'si') porWorkflow[k].reintentados += 1;\n  }\n  const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);\n  const nombres = Object.keys(porWorkflow);\n  const lineas = [`Errores del ${dia}: ${hoy.length} en ${nombres.length} workflow` +\n    `${nombres.length > 1 ? 's' : ''}.`];\n  for (const [nombre, w] of Object.entries(porWorkflow)\n    .sort((a, b) => (b[1].total - a[1].total) || cmp(a[0], b[0]))) {\n    lineas.push(`- ${nombre}: ${w.total}${w.reintentados ? ` (${w.reintentados} reintentados)` : ''}`);\n  }\n  const categorias = {};\n  for (const f of hoy) {\n    const c = String(f.categoria || '?');\n    categorias[c] = (categorias[c] || 0) + 1;\n  }\n  lineas.push('Por tipo: ' + Object.entries(categorias)\n    .sort((a, b) => (b[1] - a[1]) || cmp(a[0], b[0]))\n    .map(([c, n]) => `${c} ${n}`).join(', '));\n  return lineas.join('\\n');\n}\n\n// ── panel HTML (solo demo) ──\n\nconst esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n\nfunction armarPanel(estado, dia) {\n  const eventos = estado.eventos || [];\n  const grupos = Object.values(estado.grupos || {}).sort((a, b) => b.ultima - a.ultima);\n  const colores = { baja: '#6b7480', media: '#b4561b', alta: '#b3261e', critica: '#7a0f0a' };\n  const acciones = { reintentar: 'reintentado', alertar: 'alerta enviada', escalar: 'escalado',\n                     recordar: 'recordatorio', silenciar: 'contado sin avisar' };\n  const conteo = (a) => eventos.filter((e) => e.accion === a).length;\n  const filas = grupos.map((g) => `<tr>\n      <td>${esc(g.workflow)}<div class=\"sub\">${esc(g.nodo)}</div></td>\n      <td><span class=\"cat\">${esc(g.categoria)}</span></td>\n      <td class=\"msg\">${esc(g.mensaje)}</td>\n      <td class=\"num\">${g.total}</td></tr>`).join('');\n  const ultimos = eventos.slice(-12).reverse().map((e) => `<li>\n      <b style=\"color:${colores[e.severidad]}\">${esc(e.severidad)}</b>\n      ${esc(e.workflow)} · ${esc(e.nodo)} — <i>${esc(acciones[e.accion] || e.accion)}</i></li>`).join('');\n  const tarjeta = (t, v) => `<div class=\"kpi\"><div class=\"sub\">${esc(t)}</div><b>${v}</b></div>`;\n  return `<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Monitor de errores</title>\n<style>\n:root{--bg:#f2f3f5;--panel:#fff;--t:#1c2530;--s:#66727f;--b:#dde1e6}\n@media (prefers-color-scheme:dark){:root{--bg:#11161c;--panel:#1a2129;--t:#e6ebf0;--s:#9aa6b2;--b:#2b3540}}\nbody{margin:0;background:var(--bg);color:var(--t);font:14px/1.45 system-ui,-apple-system,\"Segoe UI\",sans-serif}\nmain{max-width:1000px;margin:0 auto;padding:22px 16px;display:grid;gap:16px}\nsection{background:var(--panel);border:1px solid var(--b);border-radius:12px;padding:16px;overflow-x:auto}\nh1{font-size:20px;margin:0}h2{font-size:12px;color:var(--s);text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px}\n.sub{color:var(--s);font-size:12px}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}\n.kpi{border:1px solid var(--b);border-radius:10px;padding:10px}.kpi b{font-size:24px}\ntable{width:100%;border-collapse:collapse}td{padding:8px 6px;border-top:1px solid var(--b);vertical-align:top}\n.msg{font-family:ui-monospace,Consolas,monospace;font-size:12px}.num{text-align:right;font-weight:700}\n.cat{font-size:12px;border:1px solid var(--b);border-radius:99px;padding:2px 8px}\nul{margin:0;padding-left:18px;display:grid;gap:4px}pre{white-space:pre-wrap;margin:0;font-size:13px}\n</style></head><body><main>\n<section><h1>Monitor de errores de n8n</h1><div class=\"sub\">Actualizado ${esc(dia)} · un incidente sigue abierto mientras el mismo error se repita con menos de 30 minutos de pausa</div></section>\n<section class=\"kpis\">\n${tarjeta('Errores recibidos', eventos.length)}${tarjeta('Mensajes al equipo', conteo('alertar') + conteo('escalar') + conteo('recordar'))}\n${tarjeta('Reintentados solos', eventos.filter((e) => e.reintentado === 'si').length)}${tarjeta('Contados sin avisar', conteo('silenciar'))}\n</section>\n<section><h2>Errores agrupados</h2><table>${filas || '<tr><td>Sin errores todavía.</td></tr>'}</table></section>\n<section><h2>Últimos eventos</h2><ul>${ultimos || '<li>Sin eventos.</li>'}</ul></section>\n<section><h2>Resumen del día (lo que se enviaría a las 18:00)</h2><pre>${esc(resumenDia(eventos, dia))}</pre></section>\n</main></body></html>`;\n}\n\n// ── Ejecución en n8n ──\n\nconst memoria = $getWorkflowStaticData('global');\nconst ahora = Math.floor(Date.now() / 1000);\nconst hoy = $now.toISODate();\n\nif (MODO === 'panel') {\n  return [{ json: { html: armarPanel(memoria, hoy) } }];\n}\n\nif (MODO === 'resumen') {\n  // En producción el registro está en la hoja; en la demo, en la memoria\n  let filas;\n  try { filas = $('Sheets · Leer registro').all().map((i) => i.json); }\n  catch (e) { filas = memoria.eventos || []; }\n  return [{ json: { texto: resumenDia(filas, hoy) } }];\n}\n\nreturn $input.all().map((item) => {\n  const r = decidir(leerEvento(item.json), memoria, ahora);\n  const fila = filaRegistro(r, $now.toISO());\n  memoria.eventos = (memoria.eventos || []).concat([fila]).slice(-MAX_EVENTOS);\n  // Las cadenas de reintentos viejas no sirven: se guardan solo las últimas 500\n  const ids = Object.keys(memoria.cadenas);\n  if (ids.length > 500) for (const id of ids.slice(0, ids.length - 500)) delete memoria.cadenas[id];\n  return { json: Object.assign(r, { fila }) };\n});\n"
+      },
+      "id": "code-2",
+      "name": "Clasificar error simulado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "resp-1",
+      "name": "Responder decisión",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "monitor-demo/panel",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "wh-2",
+      "name": "Webhook · Panel",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "monitor-demo-panel"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nodos Code de n8n del monitor de errores.\n// Espejo en JavaScript de src/monitor.py (misma lógica, misma salida).\n// La paridad entre ambos la verifica tests/test_paridad_js.py.\n//\n// scripts/build_workflow.py fija el marcador MODO:\n//   'error'    clasifica un aviso del Error Trigger (o uno simulado por webhook)\n//   'resumen'  arma el resumen del día desde el registro\n//   'panel'    arma el panel HTML de la demo\n\nconst MODO = 'panel';\n\nconst PAUSA_CIERRE = 30 * 60;\nconst UMBRAL_ESCALAR = 5;\nconst RECORDATORIO = 4 * 60 * 60;\nconst MAX_REINTENTOS = 2;\nconst NIVELES = ['baja', 'media', 'alta', 'critica'];\nconst CRITICOS = ['Cobros · sincronizar pagos', 'Tienda · sincronizar stock'];\nconst SIN_REINTENTO = ['Newsletter · envío masivo'];\nconst MAX_EVENTOS = 300;       // eventos que guarda la demo para el panel\n\nconst CATEGORIAS = [\n  ['transitorio', ['timeout', 'timed out', 'econnreset', 'econnaborted', 'econnrefused',\n    'etimedout', 'socket hang up', 'too many requests', 'rate limit',\n    'bad gateway', 'service unavailable', 'gateway timeout',\n    'server is offline', 'temporarily', '#429', '#502', '#503', '#504']],\n  ['credenciales', ['unauthorized', 'forbidden', 'invalid credentials', 'authentication',\n    'token expired', 'token has expired', 'invalid_grant', 'api key',\n    'permission', '#401', '#403']],\n  ['datos', ['cannot read properties', 'is not a function', 'is not defined',\n    'unexpected token', 'invalid json', 'invalid input', 'validation',\n    'required field', 'typeerror']],\n  ['configuracion', ['not found', 'does not exist', 'no node', 'missing', 'parameter',\n    'could not find', '#404']],\n];\n\nconst SEVERIDAD_BASE = { transitorio: 'baja', credenciales: 'alta', datos: 'media',\n                         configuracion: 'alta', desconocido: 'media' };\n\nconst SUGERENCIA = {\n  transitorio: 'El servicio externo no respondió a tiempo. Si sigue fallando, revisar ' +\n    'si está caído o si se superó su límite de peticiones.',\n  credenciales: 'Una credencial venció o no tiene permisos. Renovarla en n8n → ' +\n    'Credentials; hasta entonces este workflow fallará en cada ejecución.',\n  datos: 'Llegó un dato con un formato inesperado. Abrir la ejecución para ver qué ' +\n    'entrada lo causó.',\n  configuracion: 'Falta algo en la configuración del workflow: un nodo, un recurso o ' +\n    'un parámetro.',\n  desconocido: 'Abrir la ejecución para revisar el detalle.',\n};\n\nconst SECRETOS = [\n  /(bearer[ \\t]+)[A-Za-z0-9._~+/=-]+/gi,\n  /((?:api[_-]?key|token|secret|password|clave|access_token)[\"']?[ \\t]*[:=][ \\t]*[\"']?)[^ \\t\\r\\n\"'&,}]+/gi,\n  /(https?:\\/\\/[^ \\t\\r\\n:/@]+:)[^ \\t\\r\\n@/]+(?=@)/gi,\n];\n\n// Cortar por caracteres y no por unidades UTF-16, como hace Python con [:n]\nconst cortar = (s, n) => Array.from(s).slice(0, n).join('');\n\n// ── lectura y limpieza ──\n\nfunction limpiar(texto) {\n  let t = String(texto === null || texto === undefined ? '' : texto);\n  for (const patron of SECRETOS) t = t.replace(patron, '$1***');\n  return t;\n}\n\nfunction leerEvento(aviso) {\n  if (aviso.body && typeof aviso.body === 'object' && 'workflow' in aviso.body) aviso = aviso.body;\n  const ejecucion = aviso.execution || {};\n  const disparador = aviso.trigger || {};\n  const error = ejecucion.error || disparador.error || {};\n  const nodo = (error.node && typeof error.node === 'object' && !Array.isArray(error.node)) ? error.node : {};\n  const mensajes = Array.isArray(error.messages) ? error.messages : [];\n  const workflow = aviso.workflow || {};\n  const tieneDisparador = Object.keys(disparador).length > 0;\n  return {\n    workflow_id: String(workflow.id || ''),\n    workflow: String(workflow.name || '(sin nombre)'),\n    ejecucion_id: String(ejecucion.id || ''),\n    url: String(ejecucion.url || ''),\n    nodo: String(nodo.name || ejecucion.lastNodeExecuted || (tieneDisparador ? '(disparador)' : '')),\n    tipo_error: String(error.name || ''),\n    mensaje: cortar(limpiar(error.message || '(sin mensaje)'), 300),\n    detalle: cortar(limpiar(error.description || (mensajes.length ? mensajes[0] : '')), 300),\n    codigo: String(error.httpCode || ''),\n    reintento_de: String(ejecucion.retryOf || ''),\n    modo: String(ejecucion.mode || disparador.mode || ''),\n  };\n}\n\n// ── clasificación ──\n\nfunction clasificar(e) {\n  const texto = [e.mensaje, e.detalle, e.codigo, e.tipo_error].join(' ').toLowerCase();\n  const codigos = new Set([...texto.matchAll(/(?<![0-9])([0-9]{3})(?![0-9])/g)].map((m) => '#' + m[1]));\n  for (const [categoria, patrones] of CATEGORIAS) {\n    for (const p of patrones) {\n      if (p.startsWith('#') ? codigos.has(p) : texto.includes(p)) return categoria;\n    }\n  }\n  return 'desconocido';\n}\n\nfunction severidad(categoria, workflow, subir = 0) {\n  let nivel = NIVELES.indexOf(SEVERIDAD_BASE[categoria]) + subir;\n  if (CRITICOS.includes(workflow)) nivel += 1;\n  return NIVELES[Math.min(nivel, NIVELES.length - 1)];\n}\n\nfunction huella(e) {\n  let m = e.mensaje.toLowerCase();\n  m = m.replace(/https?:\\/\\/[^ \\t\\r\\n]+/g, '<url>');\n  m = m.replace(/[a-z0-9_.+-]+@[a-z0-9_-]+\\.[a-z0-9_.]+/g, '<email>');\n  m = m.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<id>');\n  m = m.replace(/'[^']*'|\"[^\"]*\"/g, '<txt>');\n  m = m.replace(/[0-9]+/g, '<n>');\n  m = cortar(m.replace(/[ \\t\\r\\n]+/g, ' ').replace(/^ +| +$/g, ''), 160);\n  return `${e.workflow_id}|${e.nodo}|${m}`;\n}\n\n// ── decisión ──\n\nfunction decidir(e, estado, ahora) {\n  estado.grupos = estado.grupos || {};\n  estado.cadenas = estado.cadenas || {};\n  const { grupos, cadenas } = estado;\n  const categoria = clasificar(e);\n  const h = huella(e);\n\n  // Un reintento cuyo origen no está en la memoria se da por agotado: sin\n  // esta regla, un error que nunca se resuelve se reintentaría para siempre.\n  const conocido = !e.reintento_de || Object.prototype.hasOwnProperty.call(cadenas, e.reintento_de);\n  const n = !e.reintento_de ? 0 : conocido ? cadenas[e.reintento_de] + 1 : MAX_REINTENTOS;\n  if (e.ejecucion_id) cadenas[e.ejecucion_id] = n;\n\n  // Un incidente sigue abierto mientras el error se repita sin pausas largas\n  let g = grupos[h];\n  let anterior = 0;\n  if (!g || ahora - g.ultima >= PAUSA_CIERRE) {\n    if (g) anterior = g.conteo;\n    g = { inicio: ahora, ultima: ahora, conteo: 0, total: g ? g.total : 0,\n          ultimo_aviso: 0, alertado: false, escalado: false,\n          workflow: e.workflow, nodo: e.nodo, categoria, mensaje: e.mensaje };\n    grupos[h] = g;\n  }\n  g.conteo += 1;\n  g.total += 1;\n  g.ultima = ahora;\n\n  const reintentar = categoria === 'transitorio' && n < MAX_REINTENTOS &&\n    Boolean(e.ejecucion_id) && e.modo !== 'manual' && !SIN_REINTENTO.includes(e.workflow);\n  let aviso = '';\n  if (g.conteo >= UMBRAL_ESCALAR && !g.escalado) aviso = 'escalado';\n  else if (!reintentar && !g.alertado) aviso = 'alerta';\n  else if (g.alertado && ahora - g.ultimo_aviso >= RECORDATORIO) aviso = 'recordatorio';\n  if (aviso) {\n    g.alertado = true;\n    g.escalado = g.escalado || aviso === 'escalado';\n    g.ultimo_aviso = ahora;\n  }\n\n  const accion = aviso\n    ? { alerta: 'alertar', escalado: 'escalar', recordatorio: 'recordar' }[aviso]\n    : reintentar ? 'reintentar' : 'silenciar';\n  const sev = severidad(categoria, e.workflow, aviso === 'escalado' ? 1 : 0);\n  const r = { accion, reintentar, aviso, categoria, severidad: sev, huella: h,\n              conteo: g.conteo, reintento: n, evento: e, mensaje: '' };\n  if (aviso) {\n    r.mensaje = mensajeAlerta(e, categoria, sev, g, conocido ? n : -1, anterior, aviso, reintentar);\n  }\n  return r;\n}\n\nfunction duracion(segundos) {\n  const minutos = Math.max(1, Math.floor((segundos + 59) / 60));\n  if (minutos < 60) return `${minutos} min`;\n  return `${Math.floor(minutos / 60)} h ${String(minutos % 60).padStart(2, '0')} min`;\n}\n\nfunction mensajeAlerta(e, categoria, sev, g, n, anterior, aviso, reintentar) {\n  const titulo = { alerta: '', escalado: 'Se repite: ', recordatorio: 'Sigue fallando: ' }[aviso];\n  const lineas = [`[${sev.toUpperCase()}] ${titulo}${e.workflow}`];\n  if (aviso !== 'alerta') {\n    lineas.push(`${g.conteo} veces en ${duracion(g.ultima - g.inicio)}` +\n      (reintentar ? ' · cada ejecución se sigue reintentando sola.' : '.'));\n  }\n  lineas.push(`Nodo: ${e.nodo || '(desconocido)'}`);\n  lineas.push(`Error: ${e.mensaje}${e.codigo ? ` (${e.codigo})` : ''}`);\n  let tipo = `Tipo: ${categoria}`;\n  if (n > 0) {\n    const s = n > 1 ? 's' : '';\n    tipo += ` · falló también tras ${n} reintento${s} automático${s}`;\n  } else if (n < 0) {\n    tipo += ' · es un reintento y volvió a fallar';\n  }\n  lineas.push(tipo);\n  if (anterior > 1) lineas.push(`Ya había pasado antes: el incidente anterior sumó ${anterior} veces.`);\n  lineas.push(`Qué hacer: ${SUGERENCIA[categoria]}`);\n  if (e.url) lineas.push(`Ejecución: ${e.url}`);\n  return lineas.join('\\n');\n}\n\nfunction filaRegistro(r, fecha) {\n  const e = r.evento;\n  return { fecha, workflow: e.workflow, nodo: e.nodo, categoria: r.categoria,\n           severidad: r.severidad, accion: r.accion, mensaje: e.mensaje, codigo: e.codigo,\n           ejecucion: e.ejecucion_id, reintento: r.reintento,\n           reintentado: r.reintentar ? 'si' : 'no', huella: r.huella };\n}\n\n// ── resumen del día ──\n\nfunction resumenDia(filas, dia) {\n  const hoy = filas.filter((f) => String(f.fecha || '').slice(0, 10) === dia);\n  if (!hoy.length) return `Errores del ${dia}: ninguno. Todos los workflows funcionaron.`;\n  const porWorkflow = {};\n  for (const f of hoy) {\n    const k = String(f.workflow || '?');\n    porWorkflow[k] = porWorkflow[k] || { total: 0, reintentados: 0 };\n    porWorkflow[k].total += 1;\n    if (f.reintentado === 'si') porWorkflow[k].reintentados += 1;\n  }\n  const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);\n  const nombres = Object.keys(porWorkflow);\n  const lineas = [`Errores del ${dia}: ${hoy.length} en ${nombres.length} workflow` +\n    `${nombres.length > 1 ? 's' : ''}.`];\n  for (const [nombre, w] of Object.entries(porWorkflow)\n    .sort((a, b) => (b[1].total - a[1].total) || cmp(a[0], b[0]))) {\n    lineas.push(`- ${nombre}: ${w.total}${w.reintentados ? ` (${w.reintentados} reintentados)` : ''}`);\n  }\n  const categorias = {};\n  for (const f of hoy) {\n    const c = String(f.categoria || '?');\n    categorias[c] = (categorias[c] || 0) + 1;\n  }\n  lineas.push('Por tipo: ' + Object.entries(categorias)\n    .sort((a, b) => (b[1] - a[1]) || cmp(a[0], b[0]))\n    .map(([c, n]) => `${c} ${n}`).join(', '));\n  return lineas.join('\\n');\n}\n\n// ── panel HTML (solo demo) ──\n\nconst esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n\nfunction armarPanel(estado, dia) {\n  const eventos = estado.eventos || [];\n  const grupos = Object.values(estado.grupos || {}).sort((a, b) => b.ultima - a.ultima);\n  const colores = { baja: '#6b7480', media: '#b4561b', alta: '#b3261e', critica: '#7a0f0a' };\n  const acciones = { reintentar: 'reintentado', alertar: 'alerta enviada', escalar: 'escalado',\n                     recordar: 'recordatorio', silenciar: 'contado sin avisar' };\n  const conteo = (a) => eventos.filter((e) => e.accion === a).length;\n  const filas = grupos.map((g) => `<tr>\n      <td>${esc(g.workflow)}<div class=\"sub\">${esc(g.nodo)}</div></td>\n      <td><span class=\"cat\">${esc(g.categoria)}</span></td>\n      <td class=\"msg\">${esc(g.mensaje)}</td>\n      <td class=\"num\">${g.total}</td></tr>`).join('');\n  const ultimos = eventos.slice(-12).reverse().map((e) => `<li>\n      <b style=\"color:${colores[e.severidad]}\">${esc(e.severidad)}</b>\n      ${esc(e.workflow)} · ${esc(e.nodo)} — <i>${esc(acciones[e.accion] || e.accion)}</i></li>`).join('');\n  const tarjeta = (t, v) => `<div class=\"kpi\"><div class=\"sub\">${esc(t)}</div><b>${v}</b></div>`;\n  return `<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Monitor de errores</title>\n<style>\n:root{--bg:#f2f3f5;--panel:#fff;--t:#1c2530;--s:#66727f;--b:#dde1e6}\n@media (prefers-color-scheme:dark){:root{--bg:#11161c;--panel:#1a2129;--t:#e6ebf0;--s:#9aa6b2;--b:#2b3540}}\nbody{margin:0;background:var(--bg);color:var(--t);font:14px/1.45 system-ui,-apple-system,\"Segoe UI\",sans-serif}\nmain{max-width:1000px;margin:0 auto;padding:22px 16px;display:grid;gap:16px}\nsection{background:var(--panel);border:1px solid var(--b);border-radius:12px;padding:16px;overflow-x:auto}\nh1{font-size:20px;margin:0}h2{font-size:12px;color:var(--s);text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px}\n.sub{color:var(--s);font-size:12px}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}\n.kpi{border:1px solid var(--b);border-radius:10px;padding:10px}.kpi b{font-size:24px}\ntable{width:100%;border-collapse:collapse}td{padding:8px 6px;border-top:1px solid var(--b);vertical-align:top}\n.msg{font-family:ui-monospace,Consolas,monospace;font-size:12px}.num{text-align:right;font-weight:700}\n.cat{font-size:12px;border:1px solid var(--b);border-radius:99px;padding:2px 8px}\nul{margin:0;padding-left:18px;display:grid;gap:4px}pre{white-space:pre-wrap;margin:0;font-size:13px}\n</style></head><body><main>\n<section><h1>Monitor de errores de n8n</h1><div class=\"sub\">Actualizado ${esc(dia)} · un incidente sigue abierto mientras el mismo error se repita con menos de 30 minutos de pausa</div></section>\n<section class=\"kpis\">\n${tarjeta('Errores recibidos', eventos.length)}${tarjeta('Mensajes al equipo', conteo('alertar') + conteo('escalar') + conteo('recordar'))}\n${tarjeta('Reintentados solos', eventos.filter((e) => e.reintentado === 'si').length)}${tarjeta('Contados sin avisar', conteo('silenciar'))}\n</section>\n<section><h2>Errores agrupados</h2><table>${filas || '<tr><td>Sin errores todavía.</td></tr>'}</table></section>\n<section><h2>Últimos eventos</h2><ul>${ultimos || '<li>Sin eventos.</li>'}</ul></section>\n<section><h2>Resumen del día (lo que se enviaría a las 18:00)</h2><pre>${esc(resumenDia(eventos, dia))}</pre></section>\n</main></body></html>`;\n}\n\n// ── Ejecución en n8n ──\n\nconst memoria = $getWorkflowStaticData('global');\nconst ahora = Math.floor(Date.now() / 1000);\nconst hoy = $now.toISODate();\n\nif (MODO === 'panel') {\n  return [{ json: { html: armarPanel(memoria, hoy) } }];\n}\n\nif (MODO === 'resumen') {\n  // En producción el registro está en la hoja; en la demo, en la memoria\n  let filas;\n  try { filas = $('Sheets · Leer registro').all().map((i) => i.json); }\n  catch (e) { filas = memoria.eventos || []; }\n  return [{ json: { texto: resumenDia(filas, hoy) } }];\n}\n\nreturn $input.all().map((item) => {\n  const r = decidir(leerEvento(item.json), memoria, ahora);\n  const fila = filaRegistro(r, $now.toISO());\n  memoria.eventos = (memoria.eventos || []).concat([fila]).slice(-MAX_EVENTOS);\n  // Las cadenas de reintentos viejas no sirven: se guardan solo las últimas 500\n  const ids = Object.keys(memoria.cadenas);\n  if (ids.length > 500) for (const id of ids.slice(0, ids.length - 500)) delete memoria.cadenas[id];\n  return { json: Object.assign(r, { fila }) };\n});\n"
+      },
+      "id": "code-3",
+      "name": "Armar panel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp-2",
+      "name": "Mostrar panel",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "monitor-demo/reiniciar",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "wh-3",
+      "name": "Webhook · Reiniciar",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        600
+      ],
+      "webhookId": "monitor-demo-reiniciar"
+    },
+    {
+      "parameters": {
+        "jsCode": "const m = $getWorkflowStaticData('global');\nfor (const k of Object.keys(m)) delete m[k];\nreturn [{ json: { reiniciado: true } }];\n"
+      },
+      "id": "code-4",
+      "name": "Borrar memoria",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "resp-3",
+      "name": "Responder reinicio",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        600
+      ]
+    }
+  ],
+  "connections": {
+    "Error en otro workflow": {
+      "main": [
+        [
+          {
+            "node": "Clasificar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook · Simular error": {
+      "main": [
+        [
+          {
+            "node": "Clasificar error simulado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clasificar error simulado": {
+      "main": [
+        [
+          {
+            "node": "Responder decisión",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook · Panel": {
+      "main": [
+        [
+          {
+            "node": "Armar panel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar panel": {
+      "main": [
+        [
+          {
+            "node": "Mostrar panel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook · Reiniciar": {
+      "main": [
+        [
+          {
+            "node": "Borrar memoria",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar memoria": {
+      "main": [
+        [
+          {
+            "node": "Responder reinicio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "monitordemo"
+  },
+  "tags": []
+}
