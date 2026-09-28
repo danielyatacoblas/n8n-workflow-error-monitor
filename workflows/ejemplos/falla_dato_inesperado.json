@@ -1,0 +1,58 @@
+{
+  "id": "ejemplofacturas",
+  "name": "Facturas · leer PDF",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "falla-datos",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "ejemplofacturas-wh",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "falla-datos"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Espera {factura: {total}} y no valida la entrada\nreturn [{ json: { total: $input.first().json.body.factura.total } }];\n"
+      },
+      "id": "f2",
+      "name": "Leer total",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Leer total",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "monitordemo"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "ejemplofacturas"
+  },
+  "tags": []
+}
