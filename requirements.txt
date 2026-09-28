@@ -1,0 +1,3 @@
+# El proyecto usa solo la librería estándar de Python.
+# La única dependencia es para correr los tests:
+pytest>=8.0

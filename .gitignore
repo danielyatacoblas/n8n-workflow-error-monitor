@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.env
+
+# ── Credenciales: nunca deben entrar al repositorio ──
+.env.*
+*secret*
+*credential*
+*.pem
+*.key

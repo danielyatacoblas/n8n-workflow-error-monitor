@@ -1,0 +1,14 @@
+# Normaliza los finales de línea: LF en el repositorio Y en el árbol de
+# trabajo, en cualquier sistema operativo.
+#
+# Sin esto, en Windows core.autocrlf convierte a CRLF al hacer checkout,
+# mientras que el módulo csv de Python escribe CRLF siempre. El resultado es
+# que la integración continua (que corre en Linux) regeneraba los datos y no
+# coincidían con los del repositorio.
+* text=auto eol=lf
+
+# Binarios: nunca tocar
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.pt binary
