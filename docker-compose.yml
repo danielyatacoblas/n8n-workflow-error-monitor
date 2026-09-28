@@ -1,0 +1,27 @@
+# n8n self-hosted para desarrollo local.
+#
+#   docker compose up -d       → http://localhost:5678
+#   docker compose logs -f     → ver ejecuciones en vivo
+#   docker compose down        → apagar (los datos quedan en el volumen)
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: monitor_n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      # El resumen de las 18:00 se interpreta en esta zona horaria
+      - GENERIC_TIMEZONE=America/Lima
+      - TZ=America/Lima
+      - WEBHOOK_URL=http://localhost:5678/
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_RUNNERS_ENABLED=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/workflows
+
+volumes:
+  n8n_data:

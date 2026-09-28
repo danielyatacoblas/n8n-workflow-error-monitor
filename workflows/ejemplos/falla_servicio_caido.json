@@ -1,0 +1,62 @@
+{
+  "id": "ejemplopagos",
+  "name": "Cobros · sincronizar pagos",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "falla-pagos",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "ejemplopagos-wh",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "falla-pagos"
+    },
+    {
+      "parameters": {
+        "url": "http://10.255.255.1:81/api/pagos",
+        "options": {
+          "timeout": 2000
+        }
+      },
+      "id": "f1",
+      "name": "API de pagos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        0
+      ],
+      "notes": "Dirección que no responde: provoca un timeout real."
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "API de pagos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "monitordemo"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "ejemplopagos"
+  },
+  "tags": []
+}

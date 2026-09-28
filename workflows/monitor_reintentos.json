@@ -1,0 +1,117 @@
+{
+  "id": "monitorreintentos",
+  "name": "Monitor de errores · reintentos",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "in-1",
+      "name": "Pedido de reintento",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "minutes"
+      },
+      "id": "wait-1",
+      "name": "Esperar 1 minuto",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "notes": "Reintentar al instante un timeout suele volver a fallar."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=REEMPLAZAR_URL_N8N/api/v1/executions/{{ $json.evento.ejecucion_id }}/retry",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"loadWorkflow\": false }",
+        "options": {}
+      },
+      "id": "http-1",
+      "name": "n8n · Reintentar ejecución",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "API pública de n8n. Credencial Header Auth: X-N8N-API-KEY."
+    },
+    {
+      "parameters": {
+        "chatId": "REEMPLAZAR_CHAT_EQUIPO",
+        "text": "=No se pudo reintentar la ejecución {{ $('Pedido de reintento').item.json.evento.ejecucion_id }} de {{ $('Pedido de reintento').item.json.evento.workflow }}.\nError original: {{ $('Pedido de reintento').item.json.evento.mensaje }}\n{{ $('Pedido de reintento').item.json.evento.url }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "tg-rf",
+      "name": "Telegram · No se pudo reintentar",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "Pedido de reintento": {
+      "main": [
+        [
+          {
+            "node": "Esperar 1 minuto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar 1 minuto": {
+      "main": [
+        [
+          {
+            "node": "n8n · Reintentar ejecución",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "n8n · Reintentar ejecución": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Telegram · No se pudo reintentar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "monitorreintentos"
+  },
+  "tags": []
+}
