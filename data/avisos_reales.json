@@ -1,0 +1,123 @@
+[
+  {
+    "execution": {
+      "id": "26",
+      "url": "http://localhost:5678/workflow/fallaprueba2/executions/26",
+      "error": {
+        "level": "info",
+        "shouldReport": false,
+        "description": "TypeError",
+        "tags": {},
+        "name": "WrappedExecutionError",
+        "lineNumber": 1,
+        "message": "Cannot read properties of undefined (reading 'total') [line 1]",
+        "stack": "WrappedExecutionError: Cannot read properties of undefined (reading 'total') [line 1]\n    at throwExecutionError (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-nodes-base@file++++home+runner+_work+n8n+n8n+packages+nodes-base/node_modules/n8n-nodes-base/nodes/Code/throw-execution-error.ts:11:9)\n    at JsTaskRunnerSandbox.runCodeAllItems (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-nodes-base@file++++home+runner+_work+n8n+n8n+packages+nodes-base/node_modules/n8n-nodes-base/nodes/Code/JsTaskRunnerSandbox.ts:46:23)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at ExecuteContext.execute (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-nodes-base@file++++home+runner+_work+n8n+n8n+packages+nodes-base/node_modules/n8n-nodes-base/nodes/Code/Code.node.ts:219:8)\n    at WorkflowExecute.executeNode (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-core@file++++home+runner+_work+n8n+n8n+packages+core/node_modules/n8n-core/src/execution-engine/workflow-execute.ts:1129:8)\n    at WorkflowExecute.runNode (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-core@file++++home+runner+_work+n8n+n8n+packages+core/node_modules/n8n-core/src/execution-engine/workflow-execute.ts:1431:11)\n    at /usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-core@file++++home+runner+_work+n8n+n8n+packages+core/node_modules/n8n-core/src/execution-engine/workflow-execute.ts:2333:27\n    at /usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-core@file++++home+runner+_work+n8n+n8n+packages+core/node_modules/n8n-core/src/execution-engine/workflow-execute.ts:2814:11"
+      },
+      "lastNodeExecuted": "Leer total",
+      "mode": "webhook",
+      "executionContext": {
+        "version": 1,
+        "establishedAt": 1790629266395,
+        "source": "webhook",
+        "triggerNode": {
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook"
+        },
+        "redaction": {
+          "version": 2,
+          "production": false,
+          "manual": false
+        }
+      }
+    },
+    "workflow": {
+      "id": "fallaprueba2",
+      "name": "Facturas · leer PDF"
+    }
+  },
+  {
+    "execution": {
+      "id": "25",
+      "url": "http://localhost:5678/workflow/fallaprueba1/executions/25",
+      "error": {
+        "level": "warning",
+        "shouldReport": true,
+        "tags": {},
+        "timestamp": 1790629268390,
+        "context": {
+          "itemIndex": 0,
+          "request": {
+            "headers": {
+              "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7"
+            },
+            "method": "GET",
+            "uri": "http://10.255.255.1:81/api",
+            "gzip": true,
+            "rejectUnauthorized": true,
+            "followRedirect": true,
+            "resolveWithFullResponse": true,
+            "sendCredentialsOnCrossOriginRedirect": true,
+            "followAllRedirects": true,
+            "timeout": 2000,
+            "encoding": null,
+            "json": false,
+            "useStream": true
+          }
+        },
+        "functionality": "regular",
+        "name": "NodeApiError",
+        "node": {
+          "parameters": {
+            "curlImport": "",
+            "method": "GET",
+            "url": "http://10.255.255.1:81/api",
+            "authentication": "none",
+            "provideSslCertificates": false,
+            "sendQuery": false,
+            "sendHeaders": false,
+            "sendBody": false,
+            "options": {
+              "timeout": 2000
+            },
+            "infoMessage": ""
+          },
+          "id": "f2",
+          "name": "API de pagos",
+          "type": "n8n-nodes-base.httpRequest",
+          "typeVersion": 4.2,
+          "position": [
+            200,
+            0
+          ]
+        },
+        "messages": [
+          "timeout of 2000ms exceeded",
+          "timeout of 2000ms exceeded"
+        ],
+        "httpCode": "ECONNABORTED",
+        "message": "The connection was aborted, perhaps the server is offline",
+        "stack": "NodeApiError: The connection was aborted, perhaps the server is offline\n    at ExecuteContext.execute (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-nodes-base@file++++home+runner+_work+n8n+n8n+packages+nodes-base/node_modules/n8n-nodes-base/nodes/HttpRequest/V3/HttpRequestV3.node.ts:892:16)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at WorkflowExecute.executeNode (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-core@file++++home+runner+_work+n8n+n8n+packages+core/node_modules/n8n-core/src/execution-engine/workflow-execute.ts:1129:8)\n    at WorkflowExecute.runNode (/usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-core@file++++home+runner+_work+n8n+n8n+packages+core/node_modules/n8n-core/src/execution-engine/workflow-execute.ts:1431:11)\n    at /usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-core@file++++home+runner+_work+n8n+n8n+packages+core/node_modules/n8n-core/src/execution-engine/workflow-execute.ts:2333:27\n    at /usr/local/lib/node_modules/n8n/node_modules/.pnpm/n8n-core@file++++home+runner+_work+n8n+n8n+packages+core/node_modules/n8n-core/src/execution-engine/workflow-execute.ts:2814:11"
+      },
+      "lastNodeExecuted": "API de pagos",
+      "mode": "webhook",
+      "executionContext": {
+        "version": 1,
+        "establishedAt": 1790629266323,
+        "source": "webhook",
+        "triggerNode": {
+          "name": "Webhook",
+          "type": "n8n-nodes-base.webhook"
+        },
+        "redaction": {
+          "version": 2,
+          "production": false,
+          "manual": false
+        }
+      }
+    },
+    "workflow": {
+      "id": "fallaprueba1",
+      "name": "Cobros · sincronizar pagos"
+    }
+  }
+]
