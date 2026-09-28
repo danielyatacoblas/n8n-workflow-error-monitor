@@ -1,0 +1,42 @@
+# Corre la suite completa en cada push y en cada pull request.
+
+name: tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Node se necesita para la paridad entre el nodo de n8n y Python
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Verificar que los archivos generados coinciden con el código fuente
+        run: |
+          python scripts/generar_avisos.py
+          python scripts/build_workflow.py
+          git diff --exit-code data/ workflows/ \
+            || (echo "::error::Los archivos generados no coinciden. Corre generar_avisos.py y build_workflow.py" && exit 1)
+
+      - name: Correr los tests
+        run: python -m pytest tests/ -v
+
+      - name: Simular un día de errores
+        run: python scripts/simular_monitor.py
