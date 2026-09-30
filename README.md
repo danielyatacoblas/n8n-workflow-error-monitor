@@ -177,6 +177,78 @@ integración, y una rama por cambio. Los merges son `--no-ff` para que cada
 funcionalidad quede como un bloque legible en el historial, y cada versión
 lleva su tag.
 
+```mermaid
+gitGraph
+   commit id: "chore: set up the repository"
+   branch develop
+   checkout develop
+   branch feature/avisos-de-n8n
+   checkout feature/avisos-de-n8n
+   commit id: "test: add error payloads captured from a real..."
+   commit id: "feat: generate a day of 51 error payloads fro..."
+   checkout develop
+   merge feature/avisos-de-n8n
+   branch feature/clasificacion-e-incidentes
+   checkout feature/clasificacion-e-incidentes
+   commit id: "feat: classify, group into incidents and deci..."
+   commit id: "test: cover reading real payloads, masking, c..."
+   commit id: "feat: simulate the day and count how many mes..."
+   commit id: "test: fewer messages than a fifth of the erro..."
+   checkout develop
+   merge feature/clasificacion-e-incidentes
+   branch feature/nodo-n8n
+   checkout feature/nodo-n8n
+   commit id: "feat: port the monitor to the n8n Code node w..."
+   commit id: "test: run the n8n node outside n8n and compar..."
+   checkout develop
+   merge feature/nodo-n8n
+   branch feature/workflows
+   checkout feature/workflows
+   commit id: "feat: build the demo, production and retry wo..."
+   commit id: "test: check async retries, independent decisi..."
+   commit id: "docs: add the demo panel after real failures ..."
+   checkout develop
+   merge feature/workflows
+   branch chore/ci
+   checkout chore/ci
+   commit id: "chore: run tests and the day simulation on ev..."
+   checkout develop
+   merge chore/ci
+   branch docs/documentacion
+   checkout docs/documentacion
+   commit id: "docs: explain the noise problem, the incident..."
+   commit id: "docs: add the production guide, settings and ..."
+   checkout develop
+   merge docs/documentacion
+   branch release/v1.0.0
+   checkout release/v1.0.0
+   commit id: "chore(release): prepare v1.0.0"
+   checkout main
+   merge release/v1.0.0 tag: "v1.0.0"
+   checkout develop
+   merge release/v1.0.0
+   branch docs/imagenes-readme
+   checkout docs/imagenes-readme
+   commit id: "docs: add architecture and test result images..."
+   checkout develop
+   merge docs/imagenes-readme
+   branch release/v1.1.0
+   checkout release/v1.1.0
+   commit id: "chore(release): prepare v1.1.0"
+   checkout main
+   merge release/v1.1.0 tag: "v1.1.0"
+   checkout develop
+   merge release/v1.1.0
+   branch feature/diagrama-git
+   checkout feature/diagrama-git
+   commit id: "feat: draw the Git Flow history as a Mermaid ..."
+   checkout develop
+   merge feature/diagrama-git
+```
+
+<p align="center"><i>Historial real del repositorio hasta v1.1.0, generado con
+<code>python scripts/diagrama_git.py</code>.</i></p>
+
 | Rama | Para qué |
 | --- | --- |
 | `main` | Solo versiones liberadas. Cada merge lleva su tag. |
