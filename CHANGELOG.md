@@ -3,6 +3,11 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y versionado [SemVer](https://semver.org/lang/es/).
 
+## [1.1.1]
+
+### Añadido
+- Diagrama gitGraph del historial en el README, generado por `scripts/diagrama_git.py` a partir de las ramas y tags reales.
+
 ## [1.1.0]
 
 ### Añadido
