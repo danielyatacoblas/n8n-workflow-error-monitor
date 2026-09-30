@@ -3,6 +3,15 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y versionado [SemVer](https://semver.org/lang/es/).
 
+## [1.2.0]
+
+### Añadido
+- Sección «El workflow en n8n» en el README: captura del editor, diagrama de secuencia del mecanismo principal, técnicas de n8n usadas y tabla nodo por nodo.
+- `scripts/documentar_workflow.py`: genera esas tablas desde el JSON del workflow.
+
+### Cambiado
+- El canvas se acomoda automáticamente a partir de las conexiones (`scripts/diseno_canvas.py`); ya no hay nodos encimados.
+
 ## [1.1.1]
 
 ### Añadido
