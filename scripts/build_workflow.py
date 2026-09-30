@@ -21,6 +21,8 @@ from pathlib import Path
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+from diseno_canvas import acomodar  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 JS = ROOT / "workflows" / "src" / "monitor.js"
 OUT = ROOT / "workflows"
@@ -72,6 +74,7 @@ def _flujo(wid, nombre, nodes, connections, extra_settings=None):
             "settings": settings, "pinData": {}, "meta": {"instanceId": wid}, "tags": []}
 
 
+@acomodar
 def build_demo() -> dict:
     reiniciar = ("const m = $getWorkflowStaticData('global');\n"
                  "for (const k of Object.keys(m)) delete m[k];\n"
@@ -123,6 +126,7 @@ def _telegram(nid, nombre, texto, pos):
                   "additionalFields": {"appendAttribution": False}})
 
 
+@acomodar
 def build_prod() -> dict:
     nodes = [
         _node("err-1", "Error en otro workflow", "n8n-nodes-base.errorTrigger", 1, [0, 300], {}),
@@ -210,6 +214,7 @@ def build_prod() -> dict:
     return _flujo("monitorprod", "Monitor de errores · producción", nodes, connections)
 
 
+@acomodar
 def build_reintentos() -> dict:
     """Sub-workflow: espera, reintenta por la API y avisa si la API falla."""
     nodes = [

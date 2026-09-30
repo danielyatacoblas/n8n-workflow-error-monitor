@@ -25,7 +25,7 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        220,
+        280,
         0
       ],
       "notes": "Reintentar al instante un timeout suele volver a fallar."
@@ -46,7 +46,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        440,
+        560,
         0
       ],
       "onError": "continueErrorOutput",
@@ -65,8 +65,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        660,
-        80
+        840,
+        0
       ]
     }
   ],
