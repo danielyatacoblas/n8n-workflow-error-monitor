@@ -376,6 +376,10 @@ gitGraph
 Los mensajes siguen [Conventional Commits](https://www.conventionalcommits.org/):
 `feat:`, `fix:`, `test:`, `docs:`, `chore:`, con el porqué del cambio en el cuerpo.
 
+Los tags de versión no se crean a mano: la GitHub Action
+[`tags.yml`](.github/workflows/tags.yml) etiqueta cada merge de `release/*` en
+`main` con su número de versión.
+
 ---
 
 ## Documentación
