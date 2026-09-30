@@ -23,7 +23,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        240,
+        280,
         0
       ]
     },
@@ -42,7 +42,7 @@
       "typeVersion": 2,
       "position": [
         0,
-        200
+        400
       ],
       "webhookId": "monitor-demo-error"
     },
@@ -55,8 +55,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        240,
-        200
+        280,
+        400
       ]
     },
     {
@@ -69,8 +69,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        480,
-        200
+        560,
+        400
       ]
     },
     {
@@ -88,7 +88,7 @@
       "typeVersion": 2,
       "position": [
         0,
-        400
+        800
       ],
       "webhookId": "monitor-demo-panel"
     },
@@ -101,8 +101,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        240,
-        400
+        280,
+        800
       ]
     },
     {
@@ -125,8 +125,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        480,
-        400
+        560,
+        800
       ]
     },
     {
@@ -144,7 +144,7 @@
       "typeVersion": 2,
       "position": [
         0,
-        600
+        1200
       ],
       "webhookId": "monitor-demo-reiniciar"
     },
@@ -157,8 +157,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        240,
-        600
+        280,
+        1200
       ]
     },
     {
@@ -171,8 +171,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        480,
-        600
+        560,
+        1200
       ]
     }
   ],
