@@ -47,6 +47,100 @@ flowchart TD
 
 ---
 
+## El workflow en n8n
+
+<p align="center"><img src="docs/workflow_n8n.png" alt="Workflow de producción abierto en el editor de n8n" width="900"></p>
+
+<p align="center"><i>Captura del editor de n8n 2.40 con <code>workflows/monitor_produccion.json</code> importado.
+Los triángulos rojos solo indican credenciales por conectar (Google, Telegram, IA).</i></p>
+
+### Paso a paso: la cadena de reintentos tal como corrió en n8n real
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Workflow de cobros
+    participant ET as Monitor · Error Trigger
+    participant M as workflowStaticData
+    participant SUB as Sub-workflow · reintentos
+    participant API as API de n8n
+    participant T as Telegram
+    W->>ET: falla n.º 131 (timeout)
+    ET->>M: cadena n.º 131 = 0 reintentos
+    ET-)SUB: pedir reintento, sin esperar
+    Note over ET,M: el monitor termina y guarda su memoria
+    SUB->>SUB: esperar 1 minuto
+    SUB->>API: POST /executions/131/retry
+    API->>W: reintento n.º 136
+    W->>ET: falla n.º 136 (retryOf 131)
+    ET->>M: 131 → 1 reintento
+    ET-)SUB: pedir reintento, sin esperar
+    SUB->>API: POST /executions/136/retry
+    API->>W: reintento n.º 139
+    W->>ET: falla n.º 139 (retryOf 136)
+    ET->>M: 136 → 2 reintentos = máximo
+    ET->>T: una sola alerta: "falló también tras 2 reintentos automáticos"
+```
+
+### Técnicas de n8n que usa
+
+**Monitor de errores · producción** · 14 nodos
+
+| Técnica de n8n | Para qué se usa aquí |
+| --- | --- |
+| Error Trigger | un solo workflow recibe los fallos de todos los demás |
+| Memoria persistente (workflowStaticData) | recuerda estado entre ejecuciones sin base de datos |
+| Lectura de otros nodos por nombre ($('Nodo')) | usa datos de pasos anteriores aunque $input traiga otra cosa |
+| Sub-workflow asíncrono (Execute Workflow sin esperar) | el flujo principal termina sin bloquearse |
+| Schedule Trigger con cron | el flujo corre solo, sin que nadie lo dispare |
+| Execute Once | lee una hoja completa una sola vez aunque lleguen varios items |
+| Always Output Data | una hoja vacía no corta el flujo |
+
+<details><summary>Nodo por nodo</summary>
+
+| Nodo | Tipo | Configuración |
+| --- | --- | --- |
+| Error en otro workflow | Error Trigger | — |
+| Clasificar error | Code (JavaScript) | 317 líneas generadas desde `workflows/src/` |
+| ¿Reintentar? | If | — |
+| ¿Avisar? | If | Reintentar y avisar son decisiones independientes: un error pasajero que se repite mucho se reintenta y además se escala. |
+| Pedir reintento (sin esperar) | Execute Workflow | no espera al sub-workflow. Sin esperar a propósito: si el monitor esperara, el reintento fallaría antes de que el monitor guarde su memoria y el contador de reintentos nunca subiría (ver GUIA.md). |
+| Telegram · Alerta | Telegram | — |
+| ¿Alta o crítica? | If | — |
+| Gmail · Aviso al responsable | Gmail | — |
+| Fila de registro | Edit Fields (Set) | — |
+| Sheets · Registro de errores | Google Sheets | operación `append`, pestaña `Errores` |
+| Todos los días 18:00 | Schedule Trigger | cron `0 18 * * *` |
+| Sheets · Leer registro | Google Sheets | pestaña `Errores`, Execute Once, Always Output Data |
+| Resumen del día | Code (JavaScript) | 317 líneas generadas desde `workflows/src/` |
+| Telegram · Resumen del día | Telegram | — |
+
+</details>
+
+**Monitor de errores · reintentos** · 4 nodos
+
+| Técnica de n8n | Para qué se usa aquí |
+| --- | --- |
+| Wait | espera antes de reintentar, en vez de insistir al instante |
+| Salida de error del nodo (On Error → error output) | si un servicio falla, el flujo sigue por otra rama |
+| HTTP Request con credencial genérica | llama a cualquier API aunque n8n no tenga un nodo para ella |
+| Lectura de otros nodos por nombre ($('Nodo')) | usa datos de pasos anteriores aunque $input traiga otra cosa |
+
+<details><summary>Nodo por nodo</summary>
+
+| Nodo | Tipo | Configuración |
+| --- | --- | --- |
+| Pedido de reintento | Execute Workflow Trigger | — |
+| Esperar 1 minuto | Wait | Reintentar al instante un timeout suele volver a fallar. |
+| n8n · Reintentar ejecución | HTTP Request | salida de error. API pública de n8n. Credencial Header Auth: X-N8N-API-KEY. |
+| Telegram · No se pudo reintentar | Telegram | — |
+
+</details>
+
+<sub>Tablas generadas del JSON del workflow con <code>python scripts/documentar_workflow.py workflows/monitor_produccion.json workflows/monitor_reintentos.json</code>.</sub>
+
+---
+
 ## Demo
 
 <!-- VIDEO: arrastra aquí el .mp4 al editar el README en GitHub y deja solo la URL que genera. -->
@@ -244,9 +338,31 @@ gitGraph
    commit id: "feat: draw the Git Flow history as a Mermaid ..."
    checkout develop
    merge feature/diagrama-git
+   branch docs/diagrama-git-flow
+   checkout docs/diagrama-git-flow
+   commit id: "docs: show the branch history as a gitGraph i..."
+   checkout develop
+   merge docs/diagrama-git-flow
+   branch release/v1.1.1
+   checkout release/v1.1.1
+   commit id: "chore(release): prepare v1.1.1"
+   checkout main
+   merge release/v1.1.1 tag: "v1.1.1"
+   checkout develop
+   merge release/v1.1.1
+   branch feature/canvas-ordenado
+   checkout feature/canvas-ordenado
+   commit id: "feat: lay out the canvas from the workflow co..."
+   checkout develop
+   merge feature/canvas-ordenado
+   branch feature/documentar-workflow
+   checkout feature/documentar-workflow
+   commit id: "feat: document the n8n techniques each workfl..."
+   checkout develop
+   merge feature/documentar-workflow
 ```
 
-<p align="center"><i>Historial real del repositorio hasta v1.1.0, generado con
+<p align="center"><i>Historial real del repositorio, generado con
 <code>python scripts/diagrama_git.py</code>.</i></p>
 
 | Rama | Para qué |
