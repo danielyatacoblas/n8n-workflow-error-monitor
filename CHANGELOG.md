@@ -3,6 +3,11 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y versionado [SemVer](https://semver.org/lang/es/).
 
+## [1.2.1]
+
+### Añadido
+- GitHub Action `tags.yml`: crea el tag de cada release de Git Flow al llegar a `main`.
+
 ## [1.2.0]
 
 ### Añadido
