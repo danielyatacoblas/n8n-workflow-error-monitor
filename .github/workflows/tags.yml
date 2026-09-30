@@ -1,0 +1,38 @@
+# Crea un tag por cada release de Git Flow que llega a main.
+#
+# Cada release se fusiona a main con el mensaje "Merge branch 'release/vX.Y.Z'".
+# Este workflow recorre main, encuentra esos merges y etiqueta el commit con
+# su versión si el tag todavía no existe. Así ningún tag se crea a mano y
+# siempre apunta al commit que realmente se liberó.
+
+name: tags
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  etiquetar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Crear los tags de las versiones liberadas
+        run: |
+          git log --first-parent HEAD --format='%H %s' \
+            | sed -n "s/^\([0-9a-f]\{40\}\) Merge branch 'release\/\(v[0-9.]*\)'$/\1 \2/p" \
+            | while read -r sha tag; do
+                if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+                  echo "$tag ya existe"
+                else
+                  git tag "$tag" "$sha"
+                  git push origin "refs/tags/$tag"
+                  echo "$tag creado en ${sha:0:7}"
+                fi
+              done
